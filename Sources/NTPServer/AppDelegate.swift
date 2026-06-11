@@ -6,6 +6,8 @@ import ServiceManagement
 // konfiguriert den Port und zeigt Status/Log.
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
+    private var iconStopped: NSImage?   // Outline – Dienst gestoppt
+    private var iconRunning: NSImage?   // gefüllt – Dienst läuft
 
     private var port: UInt16 = Config.defaultPort
     private let portKey = "ntpPort"
@@ -34,18 +36,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         log("Steuer-App gestartet")
     }
 
-    // Monochromes Menüleisten-Icon (SF-Symbol, passt sich hell/dunkel an).
+    // Monochrome Menüleisten-Icons (SF-Symbole, passen sich hell/dunkel an):
+    // Outline = gestoppt, gefüllt = läuft. Tatsächliche Auswahl in updateUI().
     private func setupStatusIcon() {
-        guard let button = statusItem.button else { return }
         let cfg = NSImage.SymbolConfiguration(pointSize: 14, weight: .regular)
-        if let img = NSImage(systemSymbolName: "clock", accessibilityDescription: "NTP Server")?
-            .withSymbolConfiguration(cfg) {
-            img.isTemplate = true                 // monochrom, invertiert korrekt bei Auswahl
-            button.image = img
-            button.imagePosition = .imageOnly
-        } else {
-            button.title = Config.appName         // Fallback, falls Symbol fehlt
-        }
+        iconStopped = symbolImage("clock", cfg)        // Outline
+        iconRunning = symbolImage("clock.fill", cfg)   // gefüllt/inline
+        statusItem.button?.imagePosition = .imageOnly
+        if iconStopped == nil { statusItem.button?.title = Config.appName }  // Fallback
+    }
+
+    private func symbolImage(_ name: String, _ cfg: NSImage.SymbolConfiguration) -> NSImage? {
+        guard let img = NSImage(systemSymbolName: name, accessibilityDescription: "NTP Server")?
+            .withSymbolConfiguration(cfg) else { return nil }
+        img.isTemplate = true   // monochrom, invertiert korrekt bei Menü-Auswahl
+        return img
     }
 
     // MARK: - Menü
@@ -87,6 +92,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func updateUI() {
         let installed = DaemonControl.isInstalled
         let running = installed && DaemonControl.isRunning
+        if let icon = (running ? iconRunning : iconStopped) ?? iconStopped {
+            statusItem.button?.image = icon
+        }
+        statusItem.button?.toolTip = running ? "NTP-Server läuft" : "NTP-Server gestoppt"
         guard let menu = statusItem.menu else { return }
 
         menu.item(withTag: Tag.toggle)?.title = installed ? "Server deaktivieren" : "Server aktivieren"
