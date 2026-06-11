@@ -83,3 +83,6 @@ plausible Serverzeit.
 - Ein Binary, zwei Modi: `NTP_HEADLESS=1` = reiner Server ohne GUI (so läuft der
   Daemon), `NTP_PORT=<port>` setzt den Port. Ohne `NTP_HEADLESS` startet die
   Steuer-App in der Menüleiste.
+
+## Lizenz
+MIT – siehe [LICENSE](LICENSE).
