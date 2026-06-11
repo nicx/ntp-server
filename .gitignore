@@ -1,0 +1,12 @@
+# Build-Artefakte (SwiftPM)
+/.build/
+*.dSYM/
+
+# Gebündelte App (Ausgabe von build_app.sh)
+/dist/
+
+# SwiftPM lokale Konfiguration
+/.swiftpm/
+
+# macOS
+.DS_Store
