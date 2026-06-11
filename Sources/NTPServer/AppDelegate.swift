@@ -6,6 +6,7 @@ import ServiceManagement
 // konfiguriert den Port und zeigt Status/Log.
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
+    private let runBadge = BadgeView()      // kleiner grüner Punkt, wenn Server läuft
 
     private var port: UInt16 = Config.defaultPort
     private let portKey = "ntpPort"
@@ -28,9 +29,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             port = p
         }
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        setupStatusIcon()
         buildMenu()
         updateUI()
         log("Steuer-App gestartet")
+    }
+
+    // Monochromes Menüleisten-Icon (SF-Symbol, passt sich hell/dunkel an) plus
+    // einen kleinen grünen Badge oben rechts, der nur bei laufendem Server sichtbar ist.
+    private func setupStatusIcon() {
+        guard let button = statusItem.button else { return }
+        let cfg = NSImage.SymbolConfiguration(pointSize: 14, weight: .regular)
+        if let img = NSImage(systemSymbolName: "clock", accessibilityDescription: "NTP Server")?
+            .withSymbolConfiguration(cfg) {
+            img.isTemplate = true                 // monochrom, invertiert korrekt bei Auswahl
+            button.image = img
+            button.imagePosition = .imageOnly
+        } else {
+            button.title = Config.appName         // Fallback, falls Symbol fehlt
+        }
+        runBadge.autoresizingMask = [.minXMargin, .minYMargin]   // bleibt oben rechts
+        runBadge.isHidden = true
+        button.addSubview(runBadge)
     }
 
     // MARK: - Menü
@@ -72,7 +92,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func updateUI() {
         let installed = DaemonControl.isInstalled
         let running = installed && DaemonControl.isRunning
-        statusItem.button?.title = running ? "🕐●" : "🕐"
+        if let button = statusItem.button {
+            let s: CGFloat = 6
+            runBadge.frame = NSRect(x: button.bounds.maxX - s, y: button.bounds.maxY - s, width: s, height: s)
+            runBadge.isHidden = !running
+        }
         guard let menu = statusItem.menu else { return }
 
         menu.item(withTag: Tag.toggle)?.title = installed ? "Server deaktivieren" : "Server aktivieren"
@@ -217,4 +241,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Beendet nur die Steuer-App; der Daemon läuft unabhängig weiter.
         NSApplication.shared.terminate(nil)
     }
+}
+
+// Kleiner grüner Statuspunkt, der dem Menüleisten-Icon überlagert wird.
+private final class BadgeView: NSView {
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.systemGreen.setFill()
+        NSBezierPath(ovalIn: bounds.insetBy(dx: 0.5, dy: 0.5)).fill()
+    }
+    // Klicks an den Button durchreichen (Menü soll sich öffnen).
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
