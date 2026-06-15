@@ -59,6 +59,15 @@ NTP_HEADLESS=1 NTP_PORT=12300 ./.build/release/NTPServer &
 4. **Beim Anmelden öffnen.** ✅ Menüpunkt via `SMAppService.mainApp`.
    **Logviewer.** ✅ Menüpunkt „Log anzeigen…" (App-Ereignisse + Daemon-Log).
    Offen: Signierung/Notarisierung, Zugriffs-ACL (Subnetz-Restriktion).
+5. **Benachrichtigung bei Stopp/Crash.** Offen. Aktuell gibt es **keine**
+   E-Mail/Notification – ein Crash wird von `launchd` (`KeepAlive`) still neu
+   gestartet, nur im Log sichtbar. Angedacht: (a) lokale macOS-Notification, wenn
+   die Steuer-App per Timer einen Statuswechsel „läuft→gestoppt" erkennt (nur bei
+   geöffneter App); (b) E-Mail auf Daemon-Ebene – braucht eingerichteten
+   Mailversand (`msmtp`/`sendmail` + SMTP-Zugang), auf macOS nicht vorhanden.
 
-## Stil
-Deutsch in UI und Kommentaren. Direkt, knapp, keine unnötigen Abhängigkeiten.
+## Stil & Konventionen
+- Deutsch in UI und Kommentaren. Direkt, knapp, keine unnötigen Abhängigkeiten.
+- **Neutrale Bezeichner – keine Personennamen** in Code, IDs, Dateinamen oder
+  Doku. Schema: `app.ntpserver` (Daemon-Label `app.ntpserver.daemon`, Binary
+  `/usr/local/libexec/ntpserver`). Bei neuen Identifiern fortführen.
