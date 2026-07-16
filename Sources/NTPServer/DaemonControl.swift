@@ -38,16 +38,17 @@ enum DaemonControl {
     }
 
     @discardableResult
-    static func install(port: UInt16, onError: (String) -> Void) -> Bool {
+    static func install(port: UInt16, mail: MailConfig, onError: (String) -> Void) -> Bool {
         guard let exe = Bundle.main.executablePath else {
             onError("Programm-Binary nicht gefunden."); return false
         }
         let tmpPlist  = NSTemporaryDirectory() + "\(Config.daemonLabel).plist"
         let tmpScript = NSTemporaryDirectory() + "ntpserver-install.sh"
+        let stateDir  = (Config.statePath as NSString).deletingLastPathComponent
         let script = """
         #!/bin/sh
         set -e
-        mkdir -p /usr/local/libexec
+        mkdir -p /usr/local/libexec '\(stateDir)'
         cp '\(exe)' '\(Config.daemonBinary)'
         chmod 755 '\(Config.daemonBinary)'
         cp '\(tmpPlist)' '\(Config.daemonPlist)'
@@ -58,7 +59,7 @@ enum DaemonControl {
         launchctl enable system/\(Config.daemonLabel)
         """
         do {
-            try Config.daemonPlistXML(port: port).write(toFile: tmpPlist, atomically: true, encoding: .utf8)
+            try Config.daemonPlistXML(port: port, mail: mail).write(toFile: tmpPlist, atomically: true, encoding: .utf8)
             try script.write(toFile: tmpScript, atomically: true, encoding: .utf8)
         } catch {
             onError("Vorbereitung fehlgeschlagen: \(error.localizedDescription)"); return false
@@ -69,10 +70,13 @@ enum DaemonControl {
     @discardableResult
     static func uninstall(onError: (String) -> Void) -> Bool {
         let tmpScript = NSTemporaryDirectory() + "ntpserver-uninstall.sh"
+        // Marker mit entfernen: bootout beendet sauber und der Daemon räumt ihn
+        // selbst weg – lag er aber noch (z. B. Daemon war abgestürzt), meldete
+        // die nächste Installation sonst einen Absturz, den es nie gab.
         let script = """
         #!/bin/sh
         launchctl bootout system '\(Config.daemonPlist)' 2>/dev/null || true
-        rm -f '\(Config.daemonPlist)' '\(Config.daemonBinary)'
+        rm -f '\(Config.daemonPlist)' '\(Config.daemonBinary)' '\(Config.statePath)'
         """
         do { try script.write(toFile: tmpScript, atomically: true, encoding: .utf8) }
         catch { onError("Vorbereitung fehlgeschlagen: \(error.localizedDescription)"); return false }

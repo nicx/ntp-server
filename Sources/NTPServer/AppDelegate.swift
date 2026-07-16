@@ -12,6 +12,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var port: UInt16 = Config.defaultPort
     private let portKey = "ntpPort"
 
+    // Mail-Konfiguration liegt in UserDefaults und reist von dort über die Plist
+    // zum Daemon. Adressen sind Laufzeitdaten und gehören nicht in den Code.
+    private var mail = MailConfig(host: MailConfig.defaultHost, port: MailConfig.defaultPort,
+                                  sender: "", recipient: "")
+    private enum MailKey {
+        static let host = "mailHost", port = "mailPort", from = "mailFrom", to = "mailTo"
+    }
+
     private var statusTimer: Timer?            // pollt den Daemon-Zustand fürs Icon
 
     private var logController: LogWindowController?
@@ -23,7 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }()
 
     private enum Tag {
-        static let toggle = 1, port = 2, login = 21, log = 30, status = 99
+        static let toggle = 1, port = 2, mail = 10, mailTest = 11, login = 21, log = 30, status = 99
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -31,6 +39,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
            let p = UInt16(exactly: saved) {
             port = p
         }
+        loadMailConfig()
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         setupStatusIcon()
         buildMenu()
@@ -74,6 +83,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         addItem(menu, "Server aktivieren", #selector(toggleServer), tag: Tag.toggle, key: "s")
         addItem(menu, "Port ändern…", #selector(changePort), tag: Tag.port, key: "p")
+        addItem(menu, "Absturz-Mail…", #selector(changeMail), tag: Tag.mail, key: "m")
+        addItem(menu, "Test-Mail senden", #selector(sendTestMail), tag: Tag.mailTest)
         menu.addItem(.separator())
 
         disabledItem(menu, "Server: aus", tag: Tag.status)
@@ -115,6 +126,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.item(withTag: Tag.toggle)?.title = installed ? "Server deaktivieren" : "Server aktivieren"
         menu.item(withTag: Tag.port)?.title = "Port ändern… (aktuell: \(port))"
+        menu.item(withTag: Tag.mail)?.title = mail.isConfigured
+            ? "Absturz-Mail… (an: \(mail.recipient))"
+            : "Absturz-Mail… (aus)"
+        menu.item(withTag: Tag.mailTest)?.isEnabled = mail.isConfigured
         menu.item(withTag: Tag.login)?.state = loginItemEnabled() ? .on : .off
 
         if let status = menu.item(withTag: Tag.status) {
@@ -142,7 +157,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 log("Server deaktiviert (Daemon entfernt)")
             }
         } else {
-            if DaemonControl.install(port: port, onError: { [weak self] in self?.showError($0) }) {
+            if DaemonControl.install(port: port, mail: mail, onError: { [weak self] in self?.showError($0) }) {
                 log("Server aktiviert (Daemon läuft als root auf UDP \(port))")
             }
         }
@@ -192,12 +207,134 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Bei aktivem Daemon sofort mit neuem Port neu installieren (ein Prompt).
         if DaemonControl.isInstalled {
-            if DaemonControl.install(port: port, onError: { [weak self] in self?.showError($0) }) {
+            if DaemonControl.install(port: port, mail: mail, onError: { [weak self] in self?.showError($0) }) {
                 log("Daemon mit Port \(p) neu installiert")
             }
             refreshSoon()
         }
         updateUI()
+    }
+
+    // MARK: - Absturz-Mail
+
+    private func loadMailConfig() {
+        let d = UserDefaults.standard
+        mail.host = d.string(forKey: MailKey.host).flatMap { $0.isEmpty ? nil : $0 } ?? MailConfig.defaultHost
+        mail.port = (d.object(forKey: MailKey.port) as? Int).flatMap(UInt16.init(exactly:)) ?? MailConfig.defaultPort
+        mail.sender = d.string(forKey: MailKey.from) ?? ""
+        mail.recipient = d.string(forKey: MailKey.to) ?? ""
+    }
+
+    private func saveMailConfig() {
+        let d = UserDefaults.standard
+        d.set(mail.host, forKey: MailKey.host)
+        d.set(Int(mail.port), forKey: MailKey.port)
+        d.set(mail.sender, forKey: MailKey.from)
+        d.set(mail.recipient, forKey: MailKey.to)
+    }
+
+    @objc private func changeMail() {
+        let alert = NSAlert()
+        alert.messageText = "Absturz-Mail"
+        alert.informativeText = "Meldet einen unerwarteten Neustart des Daemons per E-Mail. "
+            + "Ein manueller Stopp löst bewusst keine Mail aus.\n\n"
+            + "Versand über das lokale Relay ohne Auth/TLS. Leerer Empfänger schaltet ab."
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Abbrechen")
+
+        let fields = [("Empfänger:", mail.recipient), ("Absender:", mail.sender),
+                      ("Relay-Host:", mail.host), ("Relay-Port:", String(mail.port))]
+        let grid = NSStackView()
+        grid.orientation = .vertical
+        grid.alignment = .leading
+        grid.spacing = 6
+        var inputs: [NSTextField] = []
+        for (label, value) in fields {
+            let row = NSStackView()
+            row.orientation = .horizontal
+            row.spacing = 6
+            let caption = NSTextField(labelWithString: label)
+            caption.alignment = .right
+            caption.widthAnchor.constraint(equalToConstant: 80).isActive = true
+            let input = NSTextField(string: value)
+            input.widthAnchor.constraint(equalToConstant: 220).isActive = true
+            row.addArrangedSubview(caption)
+            row.addArrangedSubview(input)
+            grid.addArrangedSubview(row)
+            inputs.append(input)
+        }
+        grid.frame = NSRect(x: 0, y: 0, width: 310, height: 4 * 28)
+        alert.accessoryView = grid
+        alert.window.initialFirstResponder = inputs.first
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        let recipient = inputs[0].stringValue.trimmingCharacters(in: .whitespaces)
+        let sender = inputs[1].stringValue.trimmingCharacters(in: .whitespaces)
+        let host = inputs[2].stringValue.trimmingCharacters(in: .whitespaces)
+        let portText = inputs[3].stringValue.trimmingCharacters(in: .whitespaces)
+        guard let relayPort = UInt16(portText), relayPort >= 1 else {
+            showError("Ungültiger Relay-Port: \(portText) — erlaubt sind 1–65535.")
+            return
+        }
+        // Kein Empfänger ⇒ Versand aus; sonst braucht das Relay auch einen Absender.
+        if !recipient.isEmpty && sender.isEmpty {
+            showError("Ohne Absender nimmt das Relay die Mail nicht an.")
+            return
+        }
+        let old = mail
+        mail = MailConfig(host: host.isEmpty ? MailConfig.defaultHost : host,
+                          port: relayPort, sender: sender, recipient: recipient)
+        saveMailConfig()
+        log(mail.isConfigured ? "Absturz-Mail an \(recipient) über \(mail.host):\(relayPort)"
+                              : "Absturz-Mail deaktiviert")
+
+        // Die Konfiguration steckt in der Plist – der Daemon sieht Änderungen
+        // erst nach Neuinstallation.
+        let changed = old.host != mail.host || old.port != mail.port
+            || old.sender != mail.sender || old.recipient != mail.recipient
+        if changed && DaemonControl.isInstalled {
+            if DaemonControl.install(port: port, mail: mail, onError: { [weak self] in self?.showError($0) }) {
+                log("Daemon mit neuer Mail-Konfiguration neu installiert")
+            }
+            refreshSoon()
+        }
+        updateUI()
+    }
+
+    @objc private func sendTestMail() {
+        guard mail.isConfigured else {
+            showError("Erst unter „Absturz-Mail…\" Empfänger und Absender eintragen.")
+            return
+        }
+        let cfg = mail
+        let body = """
+        Test der Absturz-Benachrichtigung des NTP-Servers.
+
+        Kommt diese Mail an, erreicht auch die echte Absturzmeldung ihr Ziel.
+        Sie wird von der Steuer-App verschickt; im Ernstfall verschickt sie der
+        Daemon selbst über dieselbe Konfiguration.
+
+        Relay:     \(cfg.host):\(cfg.port)
+        Zeitpunkt: \(ISO8601DateFormatter().string(from: Date()))
+        """
+        log("Test-Mail an \(cfg.recipient) über \(cfg.host):\(cfg.port)…")
+        // Nebenläufig: ein totes Relay würde die Menüleiste sonst einfrieren.
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let err = MailNotifier.send(cfg, subject: "NTP-Server: Test-Mail", body: body)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if let err {
+                    self.showError("Test-Mail fehlgeschlagen: \(err)")
+                } else {
+                    self.log("Test-Mail zugestellt")
+                    let ok = NSAlert()
+                    ok.messageText = Config.appName
+                    ok.informativeText = "Test-Mail an \(cfg.recipient) zugestellt."
+                    ok.runModal()
+                }
+            }
+        }
     }
 
     // MARK: - Beim Anmelden öffnen (betrifft die Steuer-App)

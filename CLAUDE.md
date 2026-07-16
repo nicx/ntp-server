@@ -23,6 +23,11 @@ Command Line Tools. (Port 123 braucht root → Daemon statt App-internem Server.
   liest installierten Port aus der Plist und prüft Laufzustand (`pgrep`).
 - `Sources/NTPServer/LogWindowController.swift` – Log-Fenster (Steuer-Ereignisse
   + Daemon-Logfile, Auto-Refresh).
+- `Sources/NTPServer/MailNotifier.swift` – `MailConfig` (Relay-Host/Port,
+  Absender/Empfänger; Default-Host `::1`, **nicht** `127.0.0.1`, siehe unten) +
+  minimaler Klartext-SMTP-Client auf POSIX-Sockets.
+- `Sources/NTPServer/CrashMarker.swift` – Marker für die Absturzerkennung
+  (setzen/prüfen/entfernen) + sauberes Beenden per `DispatchSource`-Signalquelle.
 - `Sources/NTPServer/NTPServer.swift` – UDP-Listener (Network framework) +
   NTP-Paketbau (RFC 5905, vereinfacht). Leitet Stratum/LI aus dem
   Kernel-Sync-Status ab.
@@ -43,7 +48,30 @@ open ./dist/NTPServer.app
 # ACHTUNG: macOS-`sntp` versteht "host:port" NICHT (DNS lookup failure).
 # Server headless starten und mit eigenem UDP-Client prüfen (siehe README):
 NTP_HEADLESS=1 NTP_PORT=12300 ./.build/release/NTPServer &
+
+# Absturz-Mail testen, ohne root und ohne echte Mail: Marker-Pfad umbiegen
+# (NTP_STATE_PATH – der Default unter /usr/local braucht root) und gegen einen
+# Wegwerf-SMTP-Server statt gegen MailRelay senden. Marker vorlegen = Absturz.
+echo "pid=1 port=123" > /tmp/ntp.state
+NTP_HEADLESS=1 NTP_PORT=12300 NTP_STATE_PATH=/tmp/ntp.state \
+  NTP_MAIL_HOST=::1 NTP_MAIL_PORT=2526 \
+  NTP_MAIL_FROM=a@example.invalid NTP_MAIL_TO=b@example.invalid \
+  ./.build/release/NTPServer
 ```
+
+## Fallen (teuer erkauft – nicht erneut hineinlaufen)
+- **Mail-Relay nie auf `127.0.0.1`.** MailRelay nimmt reines IPv4-Loopback nur
+  einmal pro Idle-Phase an (Bundle-Bug des Relays). Default ist daher `::1`;
+  `192.168.2.1` geht auch. Die Schwesterprojekte haben `127.0.0.1` als
+  Code-Default und werden zur Laufzeit umkonfiguriert – hier nicht nachbauen.
+- **Keine Top-Level-`var` in `main.swift`.** Dortige globale Variablen werden in
+  Quelltext-Reihenfolge als Anweisungen initialisiert (nicht lazy wie in anderen
+  Dateien). `runHeadless()` läuft ganz oben, griff damit auf ein noch nicht
+  initialisiertes Array zu → stiller Absturz vor dem Serverstart. Zustand, der
+  den Start überlebt, gehört in eine `static` Property (die ist lazy).
+- **Menüleisten-Icon: 14 pt.** Nicht an die 22 pt der Python-Apps angleichen –
+  dort skaliert rumps danach auf 20×20 herunter, nativ in AppKit landet die
+  Punktgröße ungebremst in der Menüleiste und wird viel zu groß.
 
 ## Bekannte Grenzen / sinnvolle Ausbaustufen
 1. **Port 123 braucht Root.** ✅ Umgesetzt: Daemon-Installation direkt aus der
@@ -59,12 +87,21 @@ NTP_HEADLESS=1 NTP_PORT=12300 ./.build/release/NTPServer &
 4. **Beim Anmelden öffnen.** ✅ Menüpunkt via `SMAppService.mainApp`.
    **Logviewer.** ✅ Menüpunkt „Log anzeigen…" (App-Ereignisse + Daemon-Log).
    Offen: Signierung/Notarisierung, Zugriffs-ACL (Subnetz-Restriktion).
-5. **Benachrichtigung bei Stopp/Crash.** Offen. Aktuell gibt es **keine**
-   E-Mail/Notification – ein Crash wird von `launchd` (`KeepAlive`) still neu
-   gestartet, nur im Log sichtbar. Angedacht: (a) lokale macOS-Notification, wenn
-   die Steuer-App per Timer einen Statuswechsel „läuft→gestoppt" erkennt (nur bei
-   geöffneter App); (b) E-Mail auf Daemon-Ebene – braucht eingerichteten
-   Mailversand (`msmtp`/`sendmail` + SMTP-Zugang), auf macOS nicht vorhanden.
+5. **Benachrichtigung bei Stopp/Crash.** ✅ Als **E-Mail auf Daemon-Ebene** (b)
+   umgesetzt, wirkt also auch bei geschlossener Steuer-App. Ein abgestürzter
+   Prozess kann nicht über sich selbst berichten, daher indirekt über einen
+   Marker (`CrashMarker`, `/usr/local/var/ntpserver.state`): beim Start gesetzt,
+   bei sauberem SIGTERM entfernt. Liegt er beim Start noch da, endete der Vorlauf
+   unsauber (Absturz oder harter Shutdown) → `launchd` hat per `KeepAlive` neu
+   gestartet → Mail. **Manueller Stopp löst bewusst keine Mail aus** (Konvention
+   wie evcc). Versand per Klartext-SMTP an das lokale MailRelay (`MailNotifier`,
+   POSIX-Sockets, keine Abhängigkeit); Auth/TLS/Retry macht das Relay.
+   Konfiguration im Menü („Absturz-Mail…"), liegt in `UserDefaults` und reist
+   über die Plist-Env (`NTP_MAIL_HOST/_PORT/_FROM/_TO`) zum Daemon – **Adressen
+   gehören nicht in den Code**. Leerer Empfänger = aus. „Test-Mail senden" prüft
+   die Strecke ohne echten Absturz.
+   Offen: (a) lokale macOS-Notification bei „läuft→gestoppt" (das 5-s-Polling der
+   Steuer-App liefert den Wechsel bereits).
 
 ## Stil & Konventionen
 - Deutsch in UI und Kommentaren. Direkt, knapp, keine unnötigen Abhängigkeiten.
