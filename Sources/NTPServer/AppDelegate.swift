@@ -12,6 +12,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var port: UInt16 = Config.defaultPort
     private let portKey = "ntpPort"
 
+    private var statusTimer: Timer?            // pollt den Daemon-Zustand fürs Icon
+
     private var logController: LogWindowController?
     private var appLog: [String] = []          // Steuer-Ereignisse (Ring, gekappt)
     private let logFormatter: DateFormatter = {
@@ -33,11 +35,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setupStatusIcon()
         buildMenu()
         updateUI()
+        startStatusPolling()
         log("Steuer-App gestartet")
+    }
+
+    // Der Daemon kann sich ohne Zutun der App ändern (Boot, Crash, launchctl von
+    // Hand). Ohne Polling bliebe das Menüleisten-Icon auf dem Stand vom App-Start.
+    private func startStatusPolling() {
+        statusTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
+            self?.updateUI()
+        }
     }
 
     // Monochrome Menüleisten-Icons (SF-Symbole, passen sich hell/dunkel an):
     // Outline = gestoppt, gefüllt = läuft. Tatsächliche Auswahl in updateUI().
+    // 14 pt ist bewusst kleiner als die 22 pt der Python-Apps (evcc, icloud-sync,
+    // MailRelay): dort skaliert rumps das Bild danach noch auf 20×20 herunter,
+    // hier geht die Punktgröße ungebremst in die Menüleiste.
     private func setupStatusIcon() {
         let cfg = NSImage.SymbolConfiguration(pointSize: 14, weight: .regular)
         iconStopped = symbolImage("clock", cfg)        // Outline
@@ -70,6 +84,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
 
         addItem(menu, "Beenden", #selector(quit), key: "q")
+        menu.delegate = self   // Zustand beim Aufklappen frisch prüfen
         statusItem.menu = menu
     }
 
@@ -132,6 +147,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         updateUI()
+        refreshSoon()
+    }
+
+    // `launchctl bootstrap` kehrt zurück, bevor der Daemon-Prozess läuft – ein
+    // sofortiges pgrep liefe ins Leere. Kurz danach noch einmal nachsehen,
+    // damit das Icon nicht bis zum nächsten Timer-Tick falsch steht.
+    private func refreshSoon() {
+        for delay in [0.4, 1.2] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in self?.updateUI() }
+        }
     }
 
     // MARK: - Port konfigurieren
@@ -170,6 +195,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if DaemonControl.install(port: port, onError: { [weak self] in self?.showError($0) }) {
                 log("Daemon mit Port \(p) neu installiert")
             }
+            refreshSoon()
         }
         updateUI()
     }
@@ -239,5 +265,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func quit() {
         // Beendet nur die Steuer-App; der Daemon läuft unabhängig weiter.
         NSApplication.shared.terminate(nil)
+    }
+}
+
+extension AppDelegate: NSMenuDelegate {
+    func menuWillOpen(_ menu: NSMenu) {
+        updateUI()
     }
 }
