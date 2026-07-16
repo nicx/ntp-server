@@ -10,9 +10,12 @@ struct MailConfig {
     var sender: String
     var recipient: String
 
-    // Relay-Default: IPv6-Loopback. NICHT 127.0.0.1 – das reine IPv4-Loopback
-    // nimmt MailRelay nur einmal pro Idle-Phase an (bekannter Bundle-Bug).
-    static let defaultHost = "::1"
+    // Relay-Default: "localhost", bewusst nicht die IP "127.0.0.1". macOS löst
+    // localhost zuerst nach ::1 auf (siehe /etc/hosts) und erst danach nach
+    // 127.0.0.1; connectSocket nimmt die erste Adresse, die verbindet. Das
+    // umgeht die Eigenheit mancher Relays, reines IPv4-Loopback nur sporadisch
+    // anzunehmen, behält aber den Fallback, falls IPv6 fehlt.
+    static let defaultHost = "localhost"
     static let defaultPort: UInt16 = 2525
 
     var isConfigured: Bool {

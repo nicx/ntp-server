@@ -60,10 +60,12 @@ NTP_HEADLESS=1 NTP_PORT=12300 NTP_STATE_PATH=/tmp/ntp.state \
 ```
 
 ## Fallen (teuer erkauft – nicht erneut hineinlaufen)
-- **Mail-Relay nie auf `127.0.0.1`.** MailRelay nimmt reines IPv4-Loopback nur
-  einmal pro Idle-Phase an (Bundle-Bug des Relays). Default ist daher `::1`;
-  `192.168.2.1` geht auch. Die Schwesterprojekte haben `127.0.0.1` als
-  Code-Default und werden zur Laufzeit umkonfiguriert – hier nicht nachbauen.
+- **Mail-Relay: `localhost`, nicht die IP `127.0.0.1`.** Reines IPv4-Loopback
+  nimmt MailRelay nur sporadisch an (einmal pro Idle-Phase, Bundle-Bug des
+  Relays). `localhost` löst auf macOS zuerst nach `::1` auf und erst danach nach
+  `127.0.0.1`; `connectSocket` nimmt die erste Adresse, die verbindet – damit ist
+  der Default generisch und trifft trotzdem IPv6 zuerst. Wer die Falle doch
+  trifft: im Menü fest auf `::1` oder die LAN-IP des Macs stellen.
 - **Keine Top-Level-`var` in `main.swift`.** Dortige globale Variablen werden in
   Quelltext-Reihenfolge als Anweisungen initialisiert (nicht lazy wie in anderen
   Dateien). `runHeadless()` läuft ganz oben, griff damit auf ein noch nicht
