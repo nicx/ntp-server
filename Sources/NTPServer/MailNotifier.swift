@@ -129,7 +129,7 @@ enum MailNotifier {
     }
 
     private static func write(_ fd: Int32, _ text: String) -> Bool {
-        var bytes = Array(text.utf8)
+        let bytes = Array(text.utf8)
         var sent = 0
         while sent < bytes.count {
             // Darwin.send explizit: sonst greift die statische send(_:subject:body:) oben.

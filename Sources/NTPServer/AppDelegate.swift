@@ -1,5 +1,6 @@
 import AppKit
 import ServiceManagement
+import UserNotifications
 
 // Reine Steuer-App (Menüleiste) für den root-NTP-Daemon. Es gibt nur EINEN
 // Server – den Daemon. Diese App installiert/aktiviert, deaktiviert,
@@ -21,6 +22,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private var statusTimer: Timer?            // pollt den Daemon-Zustand fürs Icon
+    private var lastKnownRunning = false       // für die "läuft→gestoppt"-Erkennung
+    private var suppressNextStopNotification = false   // bei gewollter Deaktivierung/Neustart
 
     private var logController: LogWindowController?
     private var appLog: [String] = []          // Steuer-Ereignisse (Ring, gekappt)
@@ -43,9 +46,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         setupStatusIcon()
         buildMenu()
+        requestNotificationAuthorization()
+        lastKnownRunning = DaemonControl.isInstalled && DaemonControl.isRunning   // Startzustand ist kein "Wechsel"
         updateUI()
         startStatusPolling()
         log("Steuer-App gestartet")
+    }
+
+    // Ohne Erlaubnis liefert UNUserNotificationCenter später still gar nichts aus.
+    private func requestNotificationAuthorization() {
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { [weak self] _, error in
+            if let error {
+                self?.log("Notification-Erlaubnis nicht erteilt: \(error.localizedDescription)")
+            }
+        }
     }
 
     // Der Daemon kann sich ohne Zutun der App ändern (Boot, Crash, launchctl von
@@ -118,6 +132,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func updateUI() {
         let installed = DaemonControl.isInstalled
         let running = installed && DaemonControl.isRunning
+
+        // "läuft→gestoppt", nur passiv über den Timer/das Menü erkannt (nicht
+        // beim eigenen Klick auf "Server deaktivieren" oder bei einer
+        // Neuinstallation, die den Daemon kurz durchstartet – siehe
+        // suppressNextStopNotification an den jeweiligen Aufrufstellen).
+        if Self.shouldNotifyStop(wasRunning: lastKnownRunning, isRunning: running, suppressed: suppressNextStopNotification) {
+            notifyUnexpectedStop()
+        }
+        suppressNextStopNotification = false
+        lastKnownRunning = running
+
         if let icon = (running ? iconRunning : iconStopped) ?? iconStopped {
             statusItem.button?.image = icon
         }
@@ -149,10 +174,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    // Reine Entscheidungslogik, losgelöst von AppKit – so ohne laufende App und
+    // ohne Daemon-Zugriff gegen alle vier Zustandsübergänge testbar.
+    static func shouldNotifyStop(wasRunning: Bool, isRunning: Bool, suppressed: Bool) -> Bool {
+        wasRunning && !isRunning && !suppressed
+    }
+
+    // Nur der Hinweis am Mac; die Mail (siehe CrashMarker/MailNotifier) wirkt
+    // unabhängig davon auch bei geschlossener App.
+    private func notifyUnexpectedStop() {
+        log("Unerwarteter Stopp erkannt")
+        let content = UNMutableNotificationContent()
+        content.title = Config.appName
+        content.body = "Der NTP-Server ist unerwartet gestoppt."
+        content.sound = .default
+        let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(request) { [weak self] error in
+            if let error {
+                self?.log("Notification konnte nicht angezeigt werden: \(error.localizedDescription)")
+            }
+        }
+    }
+
     // MARK: - Server (= Daemon) aktivieren/deaktivieren
 
     @objc private func toggleServer() {
         if DaemonControl.isInstalled {
+            suppressNextStopNotification = true   // gewollte Deaktivierung, kein "unerwartet"
             if DaemonControl.uninstall(onError: { [weak self] in self?.showError($0) }) {
                 log("Server deaktiviert (Daemon entfernt)")
             }
@@ -206,7 +254,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         log("Port auf \(p) gesetzt")
 
         // Bei aktivem Daemon sofort mit neuem Port neu installieren (ein Prompt).
+        // Reinstallation durchstartet den Daemon kurz – kein "unerwarteter Stopp".
         if DaemonControl.isInstalled {
+            suppressNextStopNotification = true
             if DaemonControl.install(port: port, mail: mail, onError: { [weak self] in self?.showError($0) }) {
                 log("Daemon mit Port \(p) neu installiert")
             }
@@ -294,6 +344,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let changed = old.host != mail.host || old.port != mail.port
             || old.sender != mail.sender || old.recipient != mail.recipient
         if changed && DaemonControl.isInstalled {
+            suppressNextStopNotification = true   // Reinstallation, kein "unerwartet"
             if DaemonControl.install(port: port, mail: mail, onError: { [weak self] in self?.showError($0) }) {
                 log("Daemon mit neuer Mail-Konfiguration neu installiert")
             }

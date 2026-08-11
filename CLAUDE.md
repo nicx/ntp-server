@@ -89,21 +89,27 @@ NTP_HEADLESS=1 NTP_PORT=12300 NTP_STATE_PATH=/tmp/ntp.state \
 4. **Beim Anmelden öffnen.** ✅ Menüpunkt via `SMAppService.mainApp`.
    **Logviewer.** ✅ Menüpunkt „Log anzeigen…" (App-Ereignisse + Daemon-Log).
    Offen: Signierung/Notarisierung, Zugriffs-ACL (Subnetz-Restriktion).
-5. **Benachrichtigung bei Stopp/Crash.** ✅ Als **E-Mail auf Daemon-Ebene** (b)
-   umgesetzt, wirkt also auch bei geschlossener Steuer-App. Ein abgestürzter
-   Prozess kann nicht über sich selbst berichten, daher indirekt über einen
-   Marker (`CrashMarker`, `/usr/local/var/ntpserver.state`): beim Start gesetzt,
-   bei sauberem SIGTERM entfernt. Liegt er beim Start noch da, endete der Vorlauf
-   unsauber (Absturz oder harter Shutdown) → `launchd` hat per `KeepAlive` neu
-   gestartet → Mail. **Manueller Stopp löst bewusst keine Mail aus** (Konvention
-   wie evcc). Versand per Klartext-SMTP an das lokale MailRelay (`MailNotifier`,
-   POSIX-Sockets, keine Abhängigkeit); Auth/TLS/Retry macht das Relay.
-   Konfiguration im Menü („Absturz-Mail…"), liegt in `UserDefaults` und reist
-   über die Plist-Env (`NTP_MAIL_HOST/_PORT/_FROM/_TO`) zum Daemon – **Adressen
-   gehören nicht in den Code**. Leerer Empfänger = aus. „Test-Mail senden" prüft
-   die Strecke ohne echten Absturz.
-   Offen: (a) lokale macOS-Notification bei „läuft→gestoppt" (das 5-s-Polling der
-   Steuer-App liefert den Wechsel bereits).
+5. **Benachrichtigung bei Stopp/Crash.** ✅ Beide angedachten Wege umgesetzt.
+   **(b) E-Mail auf Daemon-Ebene** wirkt auch bei geschlossener Steuer-App. Ein
+   abgestürzter Prozess kann nicht über sich selbst berichten, daher indirekt
+   über einen Marker (`CrashMarker`, `/usr/local/var/ntpserver.state`): beim
+   Start gesetzt, bei sauberem SIGTERM entfernt. Liegt er beim Start noch da,
+   endete der Vorlauf unsauber (Absturz oder harter Shutdown) → `launchd` hat
+   per `KeepAlive` neu gestartet → Mail. **Manueller Stopp löst bewusst keine
+   Mail aus** (Konvention wie evcc). Versand per Klartext-SMTP an das lokale
+   MailRelay (`MailNotifier`, POSIX-Sockets, keine Abhängigkeit); Auth/TLS/Retry
+   macht das Relay. Konfiguration im Menü („Absturz-Mail…"), liegt in
+   `UserDefaults` und reist über die Plist-Env (`NTP_MAIL_HOST/_PORT/_FROM/_TO`)
+   zum Daemon – **Adressen gehören nicht in den Code**. Leerer Empfänger = aus.
+   „Test-Mail senden" prüft die Strecke ohne echten Absturz.
+   **(a) lokale macOS-Notification** über `UNUserNotificationCenter`, nur bei
+   geöffneter Steuer-App: `AppDelegate.updateUI()` (per 5-s-Timer und
+   `menuWillOpen` aufgerufen) vergleicht den Zustand mit dem vorherigen Poll und
+   meldet „läuft→gestoppt". Die reine Entscheidung steckt in der statischen,
+   isoliert testbaren `shouldNotifyStop(wasRunning:isRunning:suppressed:)`.
+   `suppressNextStopNotification` unterdrückt die Meldung bei gewollten
+   Übergängen – eigenes „Server deaktivieren" sowie die kurze Downtime einer
+   Neuinstallation (Port-/Mail-Änderung bei aktivem Daemon).
 
 ## Stil & Konventionen
 - Deutsch in UI und Kommentaren. Direkt, knapp, keine unnötigen Abhängigkeiten.
