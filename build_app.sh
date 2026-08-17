@@ -17,6 +17,19 @@ APP_BUNDLE="${DIST_DIR}/${APP_NAME}.app"
 # Verfügbare Identitäten: security find-identity -v -p codesigning
 CODESIGN_IDENTITY="${CODESIGN_IDENTITY:--}"
 
+# Läuft die App aus genau diesem dist/, würde der Build ihr das Bundle unter den Füßen
+# weglöschen: der Prozess liefe mit ALTEM Code aus einem gelöschten Bundle weiter, macOS
+# graut ihn aus, das Menü reagiert nicht mehr — beenden ginge nur noch per `kill`.
+# Betrifft nur die Steuer-App; der NTP-Daemon läuft als root-LaunchDaemon unabhängig
+# weiter. Aus /Applications gestartete Instanzen sind unkritisch.
+RUNNING="$(pgrep -f "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}" || true)"
+if [[ -n "${RUNNING}" ]]; then
+  echo "ABBRUCH: ${APP_NAME} läuft gerade aus $(pwd)/${DIST_DIR} (PID: ${RUNNING//$'\n'/ })." >&2
+  echo "         Der Build würde das laufende Bundle löschen." >&2
+  echo "         Erst die App beenden (Menüleiste -> Beenden), dann erneut bauen." >&2
+  exit 1
+fi
+
 echo "==> Baue Release-Binary…"
 swift build -c release
 
