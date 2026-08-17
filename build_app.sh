@@ -9,6 +9,14 @@ BUILD_DIR=".build/release"
 DIST_DIR="dist"
 APP_BUNDLE="${DIST_DIR}/${APP_NAME}.app"
 
+# Signier-Identität. Default "-" = ad-hoc: baut ohne Zertifikat, vergibt aber keine
+# Code-Identität — der CDHash wechselt bei jedem Rebuild, macOS erkennt die App nicht
+# wieder und verwirft erteilte Berechtigungen (Mitteilungen, Gatekeeper). Mit stabiler
+# selbstsignierter Identität bleiben sie erhalten:
+#     CODESIGN_IDENTITY="nicx Selfsign" ./build_app.sh
+# Verfügbare Identitäten: security find-identity -v -p codesigning
+CODESIGN_IDENTITY="${CODESIGN_IDENTITY:--}"
+
 echo "==> Baue Release-Binary…"
 swift build -c release
 
@@ -37,8 +45,13 @@ cat > "${APP_BUNDLE}/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-echo "==> Ad-hoc-Signatur…"
-codesign --force --deep --sign - "${APP_BUNDLE}"
+if [[ "${CODESIGN_IDENTITY}" == "-" ]]; then
+  echo "==> Signatur: ad-hoc (Hinweis: CODESIGN_IDENTITY setzen für stabile Identität)"
+else
+  echo "==> Signatur: ${CODESIGN_IDENTITY}"
+fi
+codesign --force --deep --sign "${CODESIGN_IDENTITY}" "${APP_BUNDLE}"
+codesign --verify --deep --strict "${APP_BUNDLE}"
 
 echo ""
 echo "==> Fertig: $(pwd)/${APP_BUNDLE}"
